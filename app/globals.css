@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+:root {
+  background-color: #0d0d0d;
+  color: #e5e5e5;
+}
+
+/* Custom Theme Variables (Optional but recommended for v4) */
+@theme {
+  --color-background: #0d0d0d;
+  --color-surface: #1a1a1a;
+  --color-primary: #22c55e;
+  --color-secondary: #ef4444;
+  --color-text: #e5e5e5;
+  --color-subtext: #a3a3a3;
+  --color-accent: #3b82f6;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-family: Arial, Helvetica, sans-serif;
+}
