@@ -193,14 +193,26 @@ const keepAliveAgent = new https.Agent({
 // Helper to get keys from .env.local
 function getEnvCredentials() {
   const apiKey = process.env.KALSHI_API_KEY;
-  const privateKey = process.env.KALSHI_PRIVATE_KEY;
+  const rawKey = process.env.KALSHI_PRIVATE_KEY;
 
-  if (!apiKey || !privateKey) {
+  if (!apiKey || !rawKey) {
     throw new Error("Missing KALSHI_API_KEY or KALSHI_PRIVATE_KEY in .env.local");
   }
 
-  const normalizedKey = privateKey.replace(/\\n/g, '\n');
-  return { apiKey: apiKey.trim(), privateKey: normalizedKey.trim() };
+  // Handle literal "\n", extra quotes, and whitespace
+  const privateKey = rawKey
+    .replace(/\\n/g, '\n') // Replace literal \n with actual newlines
+    .replace(/"/g, '')     // Remove any accidental wrapping quotes
+    .trim();
+
+  try {
+    // Validate and create a KeyObject
+    const keyObject = crypto.createPrivateKey(privateKey);
+    return { apiKey: apiKey.trim(), privateKey: keyObject };
+  } catch (err: any) {
+    console.error("Private Key Decode Error:", err.message);
+    throw new Error(`Private Key Error: ${err.message}. Ensure your .env.local has the correct PEM format.`);
+  }
 }
 
 export async function setKalshiCredentials(environment: 'demo' | 'real') {
@@ -226,7 +238,7 @@ export async function placeTradeAction(
   price: number,
   isResting: boolean = false
 ) {
-  const { apiKey: API_KEY, privateKey: PRIVATE_KEY_PEM } = getEnvCredentials();
+  const { apiKey: API_KEY, privateKey: PRIVATE_KEY_OBJ } = getEnvCredentials();
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
 
@@ -244,7 +256,7 @@ export async function placeTradeAction(
       null,
       Buffer.from(message),
       {
-        key: PRIVATE_KEY_PEM,
+        key: PRIVATE_KEY_OBJ,
         padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
         saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
       }
@@ -290,7 +302,7 @@ export async function placeTradeAction(
  * Optimized clearAllRestingOrdersAction using fetch
  */
 export async function clearAllRestingOrdersAction(ticker: string) {
-  const { apiKey: API_KEY, privateKey: PRIVATE_KEY_PEM } = getEnvCredentials();
+  const { apiKey: API_KEY, privateKey: PRIVATE_KEY_OBJ } = getEnvCredentials();
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
 
@@ -304,7 +316,7 @@ export async function clearAllRestingOrdersAction(ticker: string) {
     const getMessage = getTimestamp + 'GET' + signingPath;
 
     const getSignature = crypto.sign(null, Buffer.from(getMessage), {
-      key: PRIVATE_KEY_PEM,
+      key: PRIVATE_KEY_OBJ,
       padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
       saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
     }).toString('base64');
@@ -339,7 +351,7 @@ export async function clearAllRestingOrdersAction(ticker: string) {
       const delMessage = delTimestamp + 'DELETE' + delPath;
 
       const delSignature = crypto.sign(null, Buffer.from(delMessage), {
-        key: PRIVATE_KEY_PEM,
+        key: PRIVATE_KEY_OBJ,
         padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
         saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
       }).toString('base64');
@@ -369,3 +381,165 @@ export async function clearAllRestingOrdersAction(ticker: string) {
     return { success: false, error: 'Failed to clear orders' };
   }
 }
+
+/**
+ * Server-side OrderBook fetcher to avoid proxy issues and ECONNRESET
+ */
+export async function fetchOrderBookAction(ticker: string) {
+  const cookieStore = await cookies();
+  const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
+  const baseUrl = environment === 'real' 
+    ? 'https://api.elections.kalshi.com' 
+    : 'https://demo-api.kalshi.co';
+
+  try {
+    const res = await fetch(`${baseUrl}/trade-api/v2/markets/${ticker}/orderbook`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'KalshiBot/1.0',
+      },
+      // @ts-ignore
+      agent: keepAliveAgent,
+      next: { revalidate: 0 },
+    });
+
+    if (!res.ok) return null;
+    const rawData = await res.json();
+
+    if (rawData.orderbook_fp) {
+      return {
+        orderbook: {
+          yes: rawData.orderbook_fp.yes_dollars.map(([p, q]: [string, string]) => [
+            Math.round(parseFloat(p) * 100),
+            Math.round(parseFloat(q))
+          ]).sort((a, b) => b[0] - a[0]),
+          no: rawData.orderbook_fp.no_dollars.map(([p, q]: [string, string]) => [
+            Math.round(parseFloat(p) * 100),
+            Math.round(parseFloat(q))
+          ]).sort((a, b) => b[0] - a[0])
+        }
+      };
+    }
+    return rawData;
+  } catch (err) {
+    console.error(`Orderbook fetch error for ${ticker}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Batch OrderBook fetcher to reduce the number of requests from the client.
+ */
+export async function fetchMultipleOrderBooksAction(tickers: string[]) {
+  if (!tickers || tickers.length === 0) return {};
+
+  const cookieStore = await cookies();
+  const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
+  const baseUrl = environment === 'real' 
+    ? 'https://api.elections.kalshi.com' 
+    : 'https://demo-api.kalshi.co';
+
+  // Use Promise.all to fetch all orderbooks in parallel on the server
+  const results = await Promise.all(
+    tickers.map(async (ticker) => {
+      try {
+        const res = await fetch(`${baseUrl}/trade-api/v2/markets/${ticker}/orderbook`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'KalshiBot/1.0',
+          },
+          // @ts-ignore
+          agent: keepAliveAgent,
+          next: { revalidate: 0 },
+        });
+
+        if (!res.ok) return [ticker, null];
+        const rawData = await res.json();
+
+        let formatted = rawData;
+        if (rawData.orderbook_fp) {
+          formatted = {
+            orderbook: {
+              yes: rawData.orderbook_fp.yes_dollars.map(([p, q]: [string, string]) => [
+                Math.round(parseFloat(p) * 100),
+                Math.round(parseFloat(q))
+              ]).sort((a, b) => b[0] - a[0]),
+              no: rawData.orderbook_fp.no_dollars.map(([p, q]: [string, string]) => [
+                Math.round(parseFloat(p) * 100),
+                Math.round(parseFloat(q))
+              ]).sort((a, b) => b[0] - a[0])
+            }
+          };
+        }
+        return [ticker, formatted];
+      } catch (err) {
+        return [ticker, null];
+      }
+    })
+  );
+
+  return Object.fromEntries(results);
+}
+
+/**
+ * Server-side Markets fetcher
+ */
+export async function fetchMarketsAction(eventTicker: string) {
+  const cookieStore = await cookies();
+  const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
+  const baseUrl = environment === 'real' 
+    ? 'https://api.elections.kalshi.com' 
+    : 'https://demo-api.kalshi.co';
+
+  try {
+    const res = await fetch(`${baseUrl}/trade-api/v2/markets?limit=1000&event_ticker=${eventTicker}&status=open`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'KalshiBot/1.0',
+      },
+      // @ts-ignore
+      agent: keepAliveAgent,
+    });
+
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.markets || [];
+  } catch (err) {
+    console.error(`Markets fetch error for ${eventTicker}:`, err);
+    return [];
+  }
+}
+
+/**
+ * Server-side Event fetcher
+ */
+export async function fetchEventAction(ticker: string) {
+  const cookieStore = await cookies();
+  const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
+  const baseUrl = environment === 'real' 
+    ? 'https://api.elections.kalshi.com' 
+    : 'https://demo-api.kalshi.co';
+
+  try {
+    const res = await fetch(`${baseUrl}/trade-api/v2/events/${ticker}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'KalshiBot/1.0',
+      },
+      // @ts-ignore
+      agent: keepAliveAgent,
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.event;
+  } catch (err) {
+    console.error(`Event fetch error for ${ticker}:`, err);
+    return null;
+  }
+}
+

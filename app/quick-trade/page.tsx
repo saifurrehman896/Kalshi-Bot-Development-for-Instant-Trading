@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useRef } from 'react';
-import { fetchMarketsByEventTicker, fetchEventByTicker, Market } from '@/lib/api';
+import { fetchMarketsAction, fetchEventAction, fetchMultipleOrderBooksAction } from '@/app/actions';
 import MarketCard from '@/components/MarketCard';
 import { ArrowRight, Link as LinkIcon, Loader2, Zap, Grid3X3 } from 'lucide-react';
+import { useEffect } from 'react';
+import type { Market } from '@/lib/api';
 
 const COLUMN_OPTIONS = [4, 5, 6, 7, 8] as const;
 
@@ -11,12 +13,13 @@ export default function QuickTradePage() {
   const [urlInput, setUrlInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [markets, setMarkets] = useState<Market[]>([]);
+  const [allOrderbooks, setAllOrderbooks] = useState<Record<string, any>>({});
   const [eventTitle, setEventTitle] = useState<string | null>(null);
   const [currentTicker, setCurrentTicker] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [gridCols, setGridCols] = useState(8);
+  const [gridCols, setGridCols] = useState(5);
   const prefetchCache = useRef<Map<string, Promise<any>>>(new Map());
 
   const extractAndValidateTicker = (url: string) => {
@@ -44,8 +47,8 @@ export default function QuickTradePage() {
       const fetchPromise = (async () => {
         try {
           const [marketData, eventData] = await Promise.all([
-            fetchMarketsByEventTicker(ticker),
-            fetchEventByTicker(ticker)
+            fetchMarketsAction(ticker),
+            fetchEventAction(ticker)
           ]);
           if (!marketData || marketData.length === 0) throw new Error("No open markets");
           return { success: true, marketData, eventData };
@@ -86,8 +89,8 @@ export default function QuickTradePage() {
           result = await prefetchCache.current.get(ticker);
         } else {
           const [marketData, eventData] = await Promise.all([
-            fetchMarketsByEventTicker(ticker),
-            fetchEventByTicker(ticker)
+            fetchMarketsAction(ticker),
+            fetchEventAction(ticker)
           ]);
           result = { success: true, marketData, eventData };
         }
@@ -113,6 +116,25 @@ export default function QuickTradePage() {
       setLoading(false);
     }
   };
+
+  // --- BATCH POLLING ---
+  useEffect(() => {
+    if (markets.length === 0) return;
+
+    const pollAll = async () => {
+      const tickers = markets.map(m => m.ticker);
+      try {
+        const data = await fetchMultipleOrderBooksAction(tickers);
+        setAllOrderbooks(prev => ({ ...prev, ...data }));
+      } catch (err) {
+        console.error("Batch poll failed:", err);
+      }
+    };
+
+    pollAll(); // Initial
+    const id = setInterval(pollAll, 1000);
+    return () => clearInterval(id);
+  }, [markets]);
 
   const handleDragStart = (index: number) => {
     setDraggedIndex(index);
@@ -238,6 +260,8 @@ export default function QuickTradePage() {
                     market={market} 
                     eventTitle={eventTitle || undefined}
                     onRemove={handleRemoveMarket}
+                    externalOrderbook={allOrderbooks[market.ticker]?.orderbook}
+                    noPoll={true}
                   />
                 </div>
               ))}

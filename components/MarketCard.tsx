@@ -1,8 +1,8 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import { Market, fetchOrderBook } from "@/lib/api";
-import { placeTradeAction, clearAllRestingOrdersAction } from "@/app/actions";
-import { Loader2, AlertCircle, CheckCircle2, X } from "lucide-react";
+import { placeTradeAction, clearAllRestingOrdersAction, fetchOrderBookAction } from "@/app/actions";
+import { Loader2, AlertCircle, CheckCircle2, X, Target } from "lucide-react";
 
 // ─── LADDER ROW ────────────────────────────────────────────────────────────────
 const LadderRow = React.memo(({
@@ -68,12 +68,12 @@ const OrderBookLadder = ({ rawYes, rawNo }: {
       <div className="grid grid-cols-2 gap-[2px]">
         <div className="bg-[#0d0d0d] rounded-b-sm py-px">
           {yesAsks.length > 0
-            ? yesAsks.map(([p, q]) => <LadderRow key={`a-${p}`} price={p} qty={q} type="ask" />)
+            ? yesAsks.map(([p, q], i) => <LadderRow key={`a-${p}-${i}`} price={p} qty={q} type="ask" />)
             : <div className="h-[22px] flex items-center justify-center text-gray-700 text-[9px] italic">—</div>}
         </div>
         <div className="bg-[#0d0d0d] rounded-b-sm py-px">
           {yesBids.length > 0
-            ? yesBids.map(([p, q]) => <LadderRow key={`b-${p}`} price={p} qty={q} type="bid" />)
+            ? yesBids.map(([p, q], i) => <LadderRow key={`b-${p}-${i}`} price={p} qty={q} type="bid" />)
             : <div className="h-[22px] flex items-center justify-center text-gray-700 text-[9px] italic">—</div>}
         </div>
       </div>
@@ -100,13 +100,15 @@ const Chip = ({ label, active, onClick }: {
 interface TradeResult { type: "success" | "error"; message: string; id: number; }
 
 // ─── MAIN ──────────────────────────────────────────────────────────────────────
-export default function MarketCard({
-  market, eventTitle, onRemove,
+const MarketCardComponent = ({
+  market, eventTitle, onRemove, externalOrderbook, noPoll
 }: {
   market: Market;
   eventTitle?: string;
   onRemove?: (ticker: string) => void;
-}) {
+  externalOrderbook?: { yes: [number, number][]; no: [number, number][]; } | null;
+  noPoll?: boolean;
+}) => {
   const [isTrading, setIsTrading] = useState(false);
   const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
   const [targetQty, setTargetQty] = useState<number | null>(5000);
@@ -121,23 +123,59 @@ export default function MarketCard({
 
   // polling ────────────────────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
+    // If we're getting external updates, don't poll internally
+    if (externalOrderbook) return;
     try {
-      const data = await fetchOrderBook(market.ticker);
-      if (data?.orderbook) setOrderbook({ yes: data.orderbook.yes || [], no: data.orderbook.no || [] });
+      const data = await fetchOrderBookAction(market.ticker);
+      if (data?.orderbook) {
+        const yes = (data.orderbook.yes || []).sort((a: any, b: any) => b[0] - a[0]);
+        const no = (data.orderbook.no || []).sort((a: any, b: any) => b[0] - a[0]);
+        setOrderbook({ yes, no });
+      }
     } catch { /* silent */ }
-  }, [market.ticker]);
+  }, [market.ticker, externalOrderbook]);
 
   useEffect(() => {
+    // Synchronize with external orderbook if provided
+    if (externalOrderbook) {
+      const sortedYes = [...(externalOrderbook.yes || [])].sort((a, b) => b[0] - a[0]);
+      const sortedNo = [...(externalOrderbook.no || [])].sort((a, b) => b[0] - a[0]);
+      setOrderbook({ yes: sortedYes, no: sortedNo });
+    }
+
+    // If noPoll is true, we never start the interval
+    if (noPoll) return;
+
     refresh();
-    const id = setInterval(refresh, 500);
+    const id = setInterval(refresh, 1000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, externalOrderbook, noPoll]);
 
   // derived ────────────────────────────────────────────────────────────────────
+  // Calculate total liquidity specifically under the 2c "Target" cap
+  // A bid at 99c (p=99) means you buy the other side at 1c (100-p=1)
+  const targetYesLiq = useMemo(() => 
+    orderbook.no.reduce((s, [p, q]) => (p >= 98 ? s + q : s), 0), 
+  [orderbook.no]);
+
+  const targetNoLiq = useMemo(() => 
+    orderbook.yes.reduce((s, [p, q]) => (p >= 98 ? s + q : s), 0), 
+  [orderbook.yes]);
+
+  // General max liquidity for manual trades
   const maxYesLiq = useMemo(() => orderbook.no.reduce((s, [, q]) => s + q, 0), [orderbook.no]);
   const maxNoLiq = useMemo(() => orderbook.yes.reduce((s, [, q]) => s + q, 0), [orderbook.yes]);
-  const bestYesPrice = orderbook.no?.[0] ? 100 - orderbook.no[0][0] : null;
-  const bestNoPrice = orderbook.yes?.[0] ? 100 - orderbook.yes[0][0] : null;
+
+  // Robust best price detection
+  const bestYesPrice = useMemo(() => {
+    const bids = orderbook.no.map(o => o[0]);
+    return bids.length > 0 ? 100 - Math.max(...bids) : null;
+  }, [orderbook.no]);
+
+  const bestNoPrice = useMemo(() => {
+    const bids = orderbook.yes.map(o => o[0]);
+    return bids.length > 0 ? 100 - Math.max(...bids) : null;
+  }, [orderbook.yes]);
 
   const displayTitle = useMemo(() => {
     if (market.yes_sub_title && market.yes_sub_title === market.no_sub_title)
@@ -234,6 +272,52 @@ export default function MarketCard({
     }
   };
 
+  const handleTargetTrade = async (side: "yes" | "no", qtyLimit: number | null, priceCap: number, resting: boolean) => {
+    if (isTrading) return;
+
+    // Use total liquidity for "Target All", or the manual qty
+    const qty = qtyLimit === null
+      ? (side === "yes" ? targetYesLiq : targetNoLiq)
+      : qtyLimit;
+
+    if (qty <= 0) {
+      console.log(`[DEBUG] No Liquidity for ${side}: 2c YesLiq=${targetYesLiq}, 2c NoLiq=${targetNoLiq}`);
+      toast("error", `No ${side.toUpperCase()} liquidity available`);
+      return;
+    }
+
+    setIsTrading(true);
+    setTradeResult({
+      type: "success",
+      message: `${qtyLimit === null ? 'TARGETING ALL' : 'TARGETING ' + qty} ${side.toUpperCase()}...`,
+      id: Date.now()
+    });
+
+    try {
+      const res = await placeTradeAction(market.ticker, side, qty, priceCap, resting);
+      if (!res.success) throw new Error(res.error || "Trade rejected");
+
+      // Extract fill information from Kalshi response
+      const order = res.data?.order;
+      const fillCount = order?.fill_count_fp ? Math.round(parseFloat(order.fill_count_fp)) : 0;
+      
+      if (fillCount > 0) {
+        toast("success", `FILLED ${fillCount} ${side.toUpperCase()} @ ${priceCap}¢`);
+      } else {
+        toast("error", `No liquidity @ ${priceCap}¢ (Canceled)`);
+      }
+      
+      refresh();
+    } catch (e: any) {
+      toast("error", e.message || "Trade failed");
+    } finally {
+      setIsTrading(false);
+      setTimeout(() => {
+        setTradeResult(p => (p && Date.now() - p.id > 2000 ? null : p));
+      }, 3000);
+    }
+  };
+
   // presets ────────────────────────────────────────────────────────────────────
   const QTY_PRESETS = [{ l: "50", v: 50 }, { l: "100", v: 100 }, { l: "1k", v: 1000 }, { l: "5k", v: 5000 }];
   const PRICE_PRESETS = [
@@ -262,9 +346,65 @@ export default function MarketCard({
 
       {/* ── INTEGRATED TITLE & COMPACT CONTROLS ────────────────────────────── */}
       <div className="bg-[#0c0c0c] border-b border-[#161616]">
+
+        {/* Target Buttons at TOP */}
+        <div className="grid grid-cols-2 gap-[2px] p-[2px] bg-[#080808] border-b border-white/5">
+          {/* YES SIDE */}
+          <div className="flex flex-col gap-[2px]">
+            <button
+              onClick={() => handleTargetTrade("yes", null, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-2 gap-1"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Target className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">YES TARGET ALL</span>
+              </div>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
+            </button>
+            <button
+              onClick={() => handleTargetTrade("yes", targetQty, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-2 gap-1"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Target className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">YES {fmtQty(targetQty)}</span>
+              </div>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
+            </button>
+          </div>
+
+          {/* NO SIDE */}
+          <div className="flex flex-col gap-[2px]">
+            <button
+              onClick={() => handleTargetTrade("no", null, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-2 gap-1"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Target className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">NO TARGET ALL</span>
+              </div>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
+            </button>
+            <button
+              onClick={() => handleTargetTrade("no", targetQty, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-2 gap-1"
+            >
+              <div className="flex items-center gap-1.5 truncate">
+                <Target className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">NO {fmtQty(targetQty)}</span>
+              </div>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
+            </button>
+          </div>
+        </div>
+
         {/* Row 1: Event Title (if exists) */}
         {eventTitle && (
-          <div className="px-2 pt-1.5 text-[7px] font-bold uppercase text-blue-400/50 tracking-widest truncate">
+          <div className="px-2 pt-1.5 text-[8.5px] font-bold uppercase text-blue-400/60 tracking-wider truncate">
             {eventTitle}
           </div>
         )}
@@ -273,10 +413,10 @@ export default function MarketCard({
         <div className="px-2 py-1.5 flex items-center gap-2">
           {/* Title & Ticker */}
           <div className="flex-1 min-w-0 pr-1">
-            <div className="text-[10px] font-bold text-gray-100 leading-tight line-clamp-2">
+            <div className="text-[11px] font-bold text-gray-100 leading-tight line-clamp-2">
               {displayTitle}
             </div>
-            <div className="text-[7px] text-gray-700 font-mono mt-0.5 truncate uppercase">
+            <div className="text-[8px] text-gray-700 font-mono mt-0.5 truncate uppercase">
               {market.ticker}
             </div>
           </div>
@@ -474,4 +614,23 @@ export default function MarketCard({
 
     </div>
   );
-}
+};
+
+// Custom comparison for memoization
+const areEqual = (prev: any, next: any) => {
+  if (prev.market.ticker !== next.market.ticker) return false;
+  if (prev.eventTitle !== next.eventTitle) return false;
+  if (prev.noPoll !== next.noPoll) return false;
+  
+  // Deep compare externalOrderbook
+  if (!prev.externalOrderbook && !next.externalOrderbook) return true;
+  if (!prev.externalOrderbook || !next.externalOrderbook) return false;
+  
+  // Simple check for price/qty changes
+  return (
+    JSON.stringify(prev.externalOrderbook.yes) === JSON.stringify(next.externalOrderbook.yes) &&
+    JSON.stringify(prev.externalOrderbook.no) === JSON.stringify(next.externalOrderbook.no)
+  );
+};
+
+export default memo(MarketCardComponent, areEqual);
