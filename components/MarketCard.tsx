@@ -385,8 +385,8 @@ const MarketCardComponent = ({
   // presets ────────────────────────────────────────────────────────────────────
   const QTY_PRESETS = [{ l: "50", v: 50 }, { l: "100", v: 100 }, { l: "1k", v: 1000 }, { l: "5k", v: 5000 }];
   const PRICE_PRESETS = [
-    { l: "2¢", v: 2 }, { l: "10¢", v: 10 }, { l: "25¢", v: 25 }, { l: "50¢", v: 50 },
-    { l: "66¢", v: 66 }, { l: "81¢", v: 81 }, { l: "90¢", v: 90 }
+    { l: "1¢", v: 1 }, { l: "2¢", v: 2 }, { l: "5¢", v: 5 }, { l: "10¢", v: 10 }, { l: "25¢", v: 25 },
+    { l: "50¢", v: 50 }, { l: "66¢", v: 66 }, { l: "81¢", v: 81 }, { l: "90¢", v: 90 }, { l: "93¢", v: 93 }
   ];
   const TRADE_PRESETS = [100, 500, 1000, 5000];
 
@@ -530,7 +530,7 @@ const MarketCardComponent = ({
           <div className="h-[0.4px] bg-white/50 w-full" />
 
           {/* Price Presets */}
-          <div className="grid grid-cols-4 gap-[2px]">
+          <div className="grid grid-cols-5 gap-[2px]">
             {PRICE_PRESETS.map(({ l, v }) => (
               <Chip key={`pp-${v}`} label={l} active={targetPrice === v} onClick={() => setTargetPrice(v)} />
             ))}
