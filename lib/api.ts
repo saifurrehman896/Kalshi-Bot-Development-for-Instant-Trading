@@ -58,6 +58,10 @@ export interface Market {
   no_sub_title?: string;
   yes_bid_dollars: string; 
   no_bid_dollars: string; 
+  yes_bid?: number;
+  no_bid?: number;
+  yes_ask?: number;
+  no_ask?: number;
   volume: number; 
   liquidity?: number;
   expiration_time?: string;

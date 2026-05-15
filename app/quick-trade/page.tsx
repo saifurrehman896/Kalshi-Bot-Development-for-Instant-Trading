@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from 'react';
-import { fetchMarketsAction, fetchEventAction, fetchMultipleOrderBooksAction } from '@/app/actions';
+import { fetchMarketsAction, fetchEventAction, fetchMultipleOrderBooksAction, fetchPositionsAction } from '@/app/actions';
 import MarketCard from '@/components/MarketCard';
 import { ArrowRight, Link as LinkIcon, Loader2, Zap, Grid3X3 } from 'lucide-react';
 import { useEffect } from 'react';
@@ -14,6 +14,7 @@ export default function QuickTradePage() {
   const [loading, setLoading] = useState(false);
   const [markets, setMarkets] = useState<Market[]>([]);
   const [allOrderbooks, setAllOrderbooks] = useState<Record<string, any>>({});
+  const [allPositions, setAllPositions] = useState<any[]>([]);
   const [eventTitle, setEventTitle] = useState<string | null>(null);
   const [currentTicker, setCurrentTicker] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -124,8 +125,16 @@ export default function QuickTradePage() {
     const pollAll = async () => {
       const tickers = markets.map(m => m.ticker);
       try {
-        const data = await fetchMultipleOrderBooksAction(tickers);
-        setAllOrderbooks(prev => ({ ...prev, ...data }));
+        const [obData, posRes] = await Promise.all([
+          fetchMultipleOrderBooksAction(tickers),
+          fetchPositionsAction()
+        ]);
+        
+        setAllOrderbooks(prev => ({ ...prev, ...obData }));
+        
+        if (posRes.success) {
+          setAllPositions(posRes.positions);
+        }
       } catch (err) {
         console.error("Batch poll failed:", err);
       }
@@ -261,6 +270,51 @@ export default function QuickTradePage() {
                     eventTitle={eventTitle || undefined}
                     onRemove={handleRemoveMarket}
                     externalOrderbook={allOrderbooks[market.ticker]?.orderbook}
+                    externalPosition={(() => {
+                      const p = allPositions.find(pos => 
+                        pos.ticker?.toUpperCase() === market.ticker?.toUpperCase() ||
+                        pos.market_ticker?.toUpperCase() === market.ticker?.toUpperCase()
+                      );
+                      if (!p) return null;
+                      const rawPos = p.position ?? p.position_fp ?? 0;
+                      const count = Math.abs(Number(rawPos));
+                      if (count === 0) return null;
+                      
+                      const getCents = (val: any) => {
+                        if (val === undefined || val === null || val === '') return 0;
+                        const num = parseFloat(String(val));
+                        if (isNaN(num)) return 0;
+                        if (typeof val === 'string' && val.includes('.')) return num * 100;
+                        return num;
+                      };
+
+                      // Deriving average price from cost and shares for v2 compatibility
+                      const cost = parseFloat(p.total_cost_dollars || p.cost_basis_dollars || p.position_cost_dollars || p.total_traded_dollars || p.total_cost || p.cost || "0");
+                      const shares = Math.abs(parseFloat(p.total_cost_shares_fp || p.position_fp || p.position || String(count)));
+                      
+                      let avgPrice = 0;
+                      if (shares > 0 && cost > 0) {
+                        avgPrice = (cost / shares) * 100;
+                      } else {
+                        avgPrice = getCents(
+                          p.average_price ?? 
+                          p.avg_price ?? 
+                          p.avg_cost_basis_dollars ?? 
+                          p.avg_cost_basis ?? 
+                          p.average_fill_price ??
+                          p.price ??
+                          0
+                        );
+                      }
+                      
+                      return {
+                        count: count,
+                        side: (p.side?.toLowerCase() === 'yes' || p.side?.toLowerCase() === 'no') 
+                          ? p.side.toLowerCase() as 'yes' | 'no'
+                          : (Number(rawPos) > 0 ? 'yes' : 'no'),
+                        price: avgPrice
+                      };
+                    })()}
                     noPoll={true}
                   />
                 </div>

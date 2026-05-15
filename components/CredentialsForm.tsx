@@ -17,7 +17,7 @@ export default function CredentialsForm() {
     setStatus("loading");
     try {
       // Pass environment to your server action
-      await setKalshiCredentials(apiKey, privateKey, environment); 
+      await setKalshiCredentials(environment); 
       setStatus("success");
       setTimeout(() => setStatus("idle"), 2000);
     } catch (err) {

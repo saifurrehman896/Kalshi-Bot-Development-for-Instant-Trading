@@ -78,13 +78,13 @@ export function useEventDiscovery(category: string, selectedTag: string | null) 
 
         if (currentRequestId === lastRequestId.current) {
           setEvents(prev => {
-            const existing = new Set(prev.map(e => e.event_ticker));
-            const unique = newEvents.filter(e => !existing.has(e.event_ticker));
+            const existing = new Set(prev.map((e: any) => e.event_ticker));
+            const unique = newEvents.filter((e: any) => !existing.has(e.event_ticker));
             return [...prev, ...unique];
           });
           setLoading(false);
         }
-      } catch (err) {
+      } catch (err: any) {
         if (!controller.signal.aborted) {
           console.error("Fetch error:", err);
         }

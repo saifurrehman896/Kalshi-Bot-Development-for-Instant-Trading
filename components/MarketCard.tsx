@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo, memo } from "react";
 import { Market, fetchOrderBook } from "@/lib/api";
-import { placeTradeAction, clearAllRestingOrdersAction, fetchOrderBookAction } from "@/app/actions";
+import { placeTradeAction, clearAllRestingOrdersAction, fetchOrderBookAction, fetchPositionsAction } from "@/app/actions";
 import { Loader2, AlertCircle, CheckCircle2, X, Target } from "lucide-react";
 
 // ─── LADDER ROW ────────────────────────────────────────────────────────────────
@@ -101,12 +101,13 @@ interface TradeResult { type: "success" | "error"; message: string; id: number; 
 
 // ─── MAIN ──────────────────────────────────────────────────────────────────────
 const MarketCardComponent = ({
-  market, eventTitle, onRemove, externalOrderbook, noPoll
+  market, eventTitle, onRemove, externalOrderbook, externalPosition, noPoll
 }: {
   market: Market;
   eventTitle?: string;
   onRemove?: (ticker: string) => void;
   externalOrderbook?: { yes: [number, number][]; no: [number, number][]; } | null;
+  externalPosition?: { count: number; side: 'yes' | 'no'; price: number } | null;
   noPoll?: boolean;
 }) => {
   const [isTrading, setIsTrading] = useState(false);
@@ -121,6 +122,8 @@ const MarketCardComponent = ({
     no: market.yes_ask ? [[100 - market.yes_ask, 100]] : [],
   }));
 
+  const [position, setPosition] = useState<{ count: number; side: 'yes' | 'no'; price: number } | null>(null);
+
   // polling ────────────────────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
     // If we're getting external updates, don't poll internally
@@ -132,8 +135,69 @@ const MarketCardComponent = ({
         const no = (data.orderbook.no || []).sort((a: any, b: any) => b[0] - a[0]);
         setOrderbook({ yes, no });
       }
+
+      // Also fetch position if not external
+      if (!externalPosition) {
+        const posRes = await fetchPositionsAction();
+        if (posRes.success && posRes.positions) {
+          const myPos = posRes.positions.find((p: any) =>
+            p.ticker?.toUpperCase() === market.ticker?.toUpperCase() ||
+            p.market_ticker?.toUpperCase() === market.ticker?.toUpperCase()
+          );
+          if (myPos) {
+            // Support both integer 'position' and string 'position_fp'
+            const rawPos = myPos.position ?? myPos.position_fp ?? 0;
+            const count = Math.abs(Number(rawPos));
+
+            if (count !== 0) {
+              const getCents = (val: any) => {
+                if (val === undefined || val === null || val === '') return 0;
+                const num = parseFloat(String(val));
+                if (isNaN(num)) return 0;
+                // If it's a dollar string (has a dot), convert to cents but keep decimals
+                if (typeof val === 'string' && val.includes('.')) return num * 100;
+                return num;
+              };
+
+              // Kalshi v2 doesn't always provide average_price directly in market_positions.
+              // We can calculate it from total_cost_dollars / position_fp if available.
+              const cost = parseFloat(myPos.total_cost_dollars || myPos.cost_basis_dollars || myPos.position_cost_dollars || myPos.total_traded_dollars || myPos.total_cost || myPos.cost || "0");
+              const shares = Math.abs(parseFloat(myPos.total_cost_shares_fp || myPos.position_fp || myPos.position || String(count)));
+
+              let avgPrice = 0;
+              if (shares > 0 && cost > 0) {
+                avgPrice = (cost / shares) * 100;
+              } else {
+                avgPrice = getCents(
+                  myPos.average_price ?? 
+                  myPos.avg_price ?? 
+                  myPos.avg_cost_basis_dollars ?? 
+                  myPos.avg_cost_basis ?? 
+                  myPos.average_fill_price ??
+                  myPos.price ??
+                  0
+                );
+              }
+
+              setPosition({
+                count: count,
+                side: (myPos.side?.toLowerCase() === 'yes' || myPos.side?.toLowerCase() === 'no')
+                  ? myPos.side.toLowerCase() as 'yes' | 'no'
+                  : (Number(rawPos) > 0 ? 'yes' : 'no'),
+                price: avgPrice
+              });
+              // @ts-ignore
+              window.DEBUG_POSITIONS = myPos;
+            } else {
+              setPosition(null);
+            }
+          } else {
+            setPosition(null);
+          }
+        }
+      }
     } catch { /* silent */ }
-  }, [market.ticker, externalOrderbook]);
+  }, [market.ticker, externalOrderbook, externalPosition]);
 
   useEffect(() => {
     // Synchronize with external orderbook if provided
@@ -154,13 +218,13 @@ const MarketCardComponent = ({
   // derived ────────────────────────────────────────────────────────────────────
   // Calculate total liquidity specifically under the 2c "Target" cap
   // A bid at 99c (p=99) means you buy the other side at 1c (100-p=1)
-  const targetYesLiq = useMemo(() => 
-    orderbook.no.reduce((s, [p, q]) => (p >= 98 ? s + q : s), 0), 
-  [orderbook.no]);
+  const targetYesLiq = useMemo(() =>
+    orderbook.no.reduce((s, [p, q]) => (p >= 98 ? s + q : s), 0),
+    [orderbook.no]);
 
-  const targetNoLiq = useMemo(() => 
-    orderbook.yes.reduce((s, [p, q]) => (p >= 98 ? s + q : s), 0), 
-  [orderbook.yes]);
+  const targetNoLiq = useMemo(() =>
+    orderbook.yes.reduce((s, [p, q]) => (p >= 98 ? s + q : s), 0),
+    [orderbook.yes]);
 
   // General max liquidity for manual trades
   const maxYesLiq = useMemo(() => orderbook.no.reduce((s, [, q]) => s + q, 0), [orderbook.no]);
@@ -300,13 +364,13 @@ const MarketCardComponent = ({
       // Extract fill information from Kalshi response
       const order = res.data?.order;
       const fillCount = order?.fill_count_fp ? Math.round(parseFloat(order.fill_count_fp)) : 0;
-      
+
       if (fillCount > 0) {
         toast("success", `FILLED ${fillCount} ${side.toUpperCase()} @ ${priceCap}¢`);
       } else {
         toast("error", `No liquidity @ ${priceCap}¢ (Canceled)`);
       }
-      
+
       refresh();
     } catch (e: any) {
       toast("error", e.message || "Trade failed");
@@ -358,7 +422,7 @@ const MarketCardComponent = ({
             >
               <div className="flex items-center gap-1.5 truncate">
                 <Target className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">YES TARGET ALL</span>
+                <span className="truncate">YES ALL</span>
               </div>
               <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
             </button>
@@ -384,7 +448,7 @@ const MarketCardComponent = ({
             >
               <div className="flex items-center gap-1.5 truncate">
                 <Target className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">NO TARGET ALL</span>
+                <span className="truncate">NO ALL</span>
               </div>
               <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
             </button>
@@ -485,6 +549,29 @@ const MarketCardComponent = ({
           </div>
         </div>
       </div>
+
+      {/* ── CURRENT POSITION ────────────────────────────────────────────────── */}
+      {(externalPosition || (position && position.count !== 0)) && (
+        <div className="mx-2 mt-2 px-3 py-2 bg-[#0a0a0a] border border-blue-500/20 rounded-lg flex items-center justify-between animate-in zoom-in-95 duration-200">
+          <div className="flex flex-col">
+            <span className="text-[7px] font-bold uppercase text-blue-500/60 tracking-widest leading-none mb-1">Current Holding</span>
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] font-black uppercase ${(externalPosition?.side || position?.side) === 'yes' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {(externalPosition?.side || position?.side)?.toUpperCase()}
+              </span>
+              <span className="text-[11px] font-mono font-bold text-gray-100">
+                {(externalPosition?.count || position?.count)} contracts
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-[7px] font-bold uppercase text-gray-500 tracking-widest block mb-0.5">Avg Price</span>
+            <span className="text-[11px] font-mono font-bold text-gray-100">
+              {(externalPosition?.price ?? position?.price ?? 0).toFixed(3)}¢
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── BEST PRICE PILLS ───────────────────────────────────────────────── */}
       <div className="flex justify-center gap-3 px-2 pt-2">
@@ -621,11 +708,14 @@ const areEqual = (prev: any, next: any) => {
   if (prev.market.ticker !== next.market.ticker) return false;
   if (prev.eventTitle !== next.eventTitle) return false;
   if (prev.noPoll !== next.noPoll) return false;
-  
+
+  // Compare positions
+  if (JSON.stringify(prev.externalPosition) !== JSON.stringify(next.externalPosition)) return false;
+
   // Deep compare externalOrderbook
   if (!prev.externalOrderbook && !next.externalOrderbook) return true;
   if (!prev.externalOrderbook || !next.externalOrderbook) return false;
-  
+
   // Simple check for price/qty changes
   return (
     JSON.stringify(prev.externalOrderbook.yes) === JSON.stringify(next.externalOrderbook.yes) &&
@@ -633,4 +723,4 @@ const areEqual = (prev: any, next: any) => {
   );
 };
 
-export default memo(MarketCardComponent, areEqual);
+export default memo(MarketCardComponent, areEqual);

@@ -413,11 +413,11 @@ export async function fetchOrderBookAction(ticker: string) {
           yes: rawData.orderbook_fp.yes_dollars.map(([p, q]: [string, string]) => [
             Math.round(parseFloat(p) * 100),
             Math.round(parseFloat(q))
-          ]).sort((a, b) => b[0] - a[0]),
+          ]).sort((a: any, b: any) => b[0] - a[0]),
           no: rawData.orderbook_fp.no_dollars.map(([p, q]: [string, string]) => [
             Math.round(parseFloat(p) * 100),
             Math.round(parseFloat(q))
-          ]).sort((a, b) => b[0] - a[0])
+          ]).sort((a: any, b: any) => b[0] - a[0])
         }
       };
     }
@@ -465,11 +465,11 @@ export async function fetchMultipleOrderBooksAction(tickers: string[]) {
               yes: rawData.orderbook_fp.yes_dollars.map(([p, q]: [string, string]) => [
                 Math.round(parseFloat(p) * 100),
                 Math.round(parseFloat(q))
-              ]).sort((a, b) => b[0] - a[0]),
+              ]).sort((a: any, b: any) => b[0] - a[0]),
               no: rawData.orderbook_fp.no_dollars.map(([p, q]: [string, string]) => [
                 Math.round(parseFloat(p) * 100),
                 Math.round(parseFloat(q))
-              ]).sort((a, b) => b[0] - a[0])
+              ]).sort((a: any, b: any) => b[0] - a[0])
             }
           };
         }
@@ -540,6 +540,60 @@ export async function fetchEventAction(ticker: string) {
   } catch (err) {
     console.error(`Event fetch error for ${ticker}:`, err);
     return null;
+  }
+}
+
+/**
+ * Server-side Positions fetcher
+ */
+export async function fetchPositionsAction() {
+  const { apiKey: API_KEY, privateKey: PRIVATE_KEY_OBJ } = getEnvCredentials();
+  const cookieStore = await cookies();
+  const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
+
+  const timestamp = Date.now().toString();
+  const method = 'GET';
+  const path = '/trade-api/v2/portfolio/positions';
+  
+  const baseUrl = environment === 'real' 
+    ? 'https://api.elections.kalshi.com' 
+    : 'https://demo-api.kalshi.co';
+
+  try {
+    const message = timestamp + method + path;
+    const signature = crypto.sign(
+      null,
+      Buffer.from(message),
+      {
+        key: PRIVATE_KEY_OBJ,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+      }
+    ).toString('base64');
+
+    const res = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: {
+        'Accept': 'application/json',
+        'KALSHI-ACCESS-KEY': API_KEY,
+        'KALSHI-ACCESS-SIGNATURE': signature,
+        'KALSHI-ACCESS-TIMESTAMP': timestamp,
+      },
+      // @ts-ignore
+      agent: keepAliveAgent,
+      next: { revalidate: 0 },
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.error?.message || 'Failed to fetch positions');
+    }
+
+    return { success: true, positions: data.market_positions || data.positions || [] };
+  } catch (error: any) {
+    console.error("Positions fetch error:", error);
+    return { success: false, error: error.message || 'Failed to fetch positions' };
   }
 }
 
