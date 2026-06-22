@@ -48,11 +48,11 @@
 
 //   const timestamp = Date.now().toString();
 //   const method = 'POST';
-//   const path = '/trade-api/v2/portfolio/orders';
+//   const path = '/trade-api/v2/portfolio/events/orders';
   
 //   const baseUrl = environment === 'real' 
-//     ? 'https://api.elections.kalshi.com' 
-//     : 'https://demo-api.kalshi.co';
+//     ? 'https://external-api.kalshi.com' 
+//     : 'https://external-api.demo.kalshi.co';
 
 //   try {
 //     const message = timestamp + method + path;
@@ -104,12 +104,12 @@
 //   const cookieStore = await cookies();
 //   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
 
-//   const baseUrl = environment === 'real' ? 'https://api.elections.kalshi.com' : 'https://demo-api.kalshi.co';
+//   const baseUrl = environment === 'real' ? 'https://external-api.kalshi.com' : 'https://external-api.demo.kalshi.co';
 
 //   try {
 //     // ── Step 1: Fetch resting orders for this specific ticker ──────────────────
 //     const getTimestamp = Date.now().toString();
-//     const signingPath = '/trade-api/v2/portfolio/orders';
+//     const signingPath = '/trade-api/v2/portfolio/events/orders';
 //     const actualUrl = `${baseUrl}${signingPath}?status=resting&ticker=${encodeURIComponent(ticker)}`;
 //     // Signing uses only the path (no query string) per Kalshi spec
 //     const getMessage = getTimestamp + 'GET' + signingPath;
@@ -145,7 +145,7 @@
 //       const batch = orders.slice(i, i + BATCH_SIZE);
 
 //       const delTimestamp = Date.now().toString();
-//       const delPath = '/trade-api/v2/portfolio/orders/batched';
+//       const delPath = '/trade-api/v2/portfolio/events/orders/batched';
 //       const delMessage = delTimestamp + 'DELETE' + delPath;
 
 //       const delSignature = crypto.sign(null, Buffer.from(delMessage), {
@@ -244,11 +244,11 @@ export async function placeTradeAction(
 
   const timestamp = Date.now().toString();
   const method = 'POST';
-  const path = '/trade-api/v2/portfolio/orders';
+  const path = '/trade-api/v2/portfolio/events/orders';
   
   const baseUrl = environment === 'real' 
-    ? 'https://api.elections.kalshi.com' 
-    : 'https://demo-api.kalshi.co';
+    ? 'https://external-api.kalshi.com' 
+    : 'https://external-api.demo.kalshi.co';
 
   try {
     const message = timestamp + method + path;
@@ -264,12 +264,12 @@ export async function placeTradeAction(
 
     const payload = {
       ticker,
-      side,
-      action: 'buy',
       client_order_id: `bot-${Date.now()}`,
-      count,
       type: 'limit',
-      [`${side}_price`]: price,
+      outcome_side: side,
+      book_side: 'bid',
+      count: count.toString(),
+      price: (price / 100).toFixed(2),
       time_in_force: isResting ? 'good_till_canceled' : 'immediate_or_cancel',
     };
 
@@ -306,12 +306,12 @@ export async function clearAllRestingOrdersAction(ticker: string) {
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
 
-  const baseUrl = environment === 'real' ? 'https://api.elections.kalshi.com' : 'https://demo-api.kalshi.co';
+  const baseUrl = environment === 'real' ? 'https://external-api.kalshi.com' : 'https://external-api.demo.kalshi.co';
 
   try {
     // ── Step 1: Fetch resting orders
     const getTimestamp = Date.now().toString();
-    const signingPath = '/trade-api/v2/portfolio/orders';
+    const signingPath = '/trade-api/v2/portfolio/events/orders';
     const actualUrl = `${baseUrl}${signingPath}?status=resting&ticker=${encodeURIComponent(ticker)}`;
     const getMessage = getTimestamp + 'GET' + signingPath;
 
@@ -347,7 +347,7 @@ export async function clearAllRestingOrdersAction(ticker: string) {
     for (let i = 0; i < orders.length; i += BATCH_SIZE) {
       const batch = orders.slice(i, i + BATCH_SIZE);
       const delTimestamp = Date.now().toString();
-      const delPath = '/trade-api/v2/portfolio/orders/batched';
+      const delPath = '/trade-api/v2/portfolio/events/orders/batched';
       const delMessage = delTimestamp + 'DELETE' + delPath;
 
       const delSignature = crypto.sign(null, Buffer.from(delMessage), {
@@ -389,8 +389,8 @@ export async function fetchOrderBookAction(ticker: string) {
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
   const baseUrl = environment === 'real' 
-    ? 'https://api.elections.kalshi.com' 
-    : 'https://demo-api.kalshi.co';
+    ? 'https://external-api.kalshi.com' 
+    : 'https://external-api.demo.kalshi.co';
 
   try {
     const res = await fetch(`${baseUrl}/trade-api/v2/markets/${ticker}/orderbook`, {
@@ -437,8 +437,8 @@ export async function fetchMultipleOrderBooksAction(tickers: string[]) {
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
   const baseUrl = environment === 'real' 
-    ? 'https://api.elections.kalshi.com' 
-    : 'https://demo-api.kalshi.co';
+    ? 'https://external-api.kalshi.com' 
+    : 'https://external-api.demo.kalshi.co';
 
   // Use Promise.all to fetch all orderbooks in parallel on the server
   const results = await Promise.all(
@@ -490,8 +490,8 @@ export async function fetchMarketsAction(eventTicker: string) {
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
   const baseUrl = environment === 'real' 
-    ? 'https://api.elections.kalshi.com' 
-    : 'https://demo-api.kalshi.co';
+    ? 'https://external-api.kalshi.com' 
+    : 'https://external-api.demo.kalshi.co';
 
   try {
     const res = await fetch(`${baseUrl}/trade-api/v2/markets?limit=1000&event_ticker=${eventTicker}&status=open`, {
@@ -520,8 +520,8 @@ export async function fetchEventAction(ticker: string) {
   const cookieStore = await cookies();
   const environment = cookieStore.get(ENV_COOKIE_NAME)?.value || 'demo';
   const baseUrl = environment === 'real' 
-    ? 'https://api.elections.kalshi.com' 
-    : 'https://demo-api.kalshi.co';
+    ? 'https://external-api.kalshi.com' 
+    : 'https://external-api.demo.kalshi.co';
 
   try {
     const res = await fetch(`${baseUrl}/trade-api/v2/events/${ticker}`, {
@@ -556,8 +556,8 @@ export async function fetchPositionsAction() {
   const path = '/trade-api/v2/portfolio/positions';
   
   const baseUrl = environment === 'real' 
-    ? 'https://api.elections.kalshi.com' 
-    : 'https://demo-api.kalshi.co';
+    ? 'https://external-api.kalshi.com' 
+    : 'https://external-api.demo.kalshi.co';
 
   try {
     const message = timestamp + method + path;

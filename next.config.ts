@@ -7,17 +7,17 @@ const nextConfig: NextConfig = {
       {
         // Proxy for Discovery (Production)
         source: "/kalshi-prod/:path*",
-        destination: "https://api.elections.kalshi.com/trade-api/v2/:path*",
+        destination: "https://external-api.kalshi.com/trade-api/v2/:path*",
       },
       {
         // Proxy for Trading (Demo)
         source: "/kalshi-demo/:path*",
-        destination: "https://demo-api.kalshi.co/trade-api/v2/:path*",
+        destination: "https://external-api.demo.kalshi.co/trade-api/v2/:path*",
       },
     ];
   },
   typescript: {
-    
+
     ignoreBuildErrors: true,
   },
 };

@@ -402,69 +402,14 @@ const MarketCardComponent = ({
         <button
           onClick={() => onRemove(market.ticker)}
           title="Remove this strike"
-          className="absolute -top-2 -right-2 z-20 w-5 h-5 rounded-full bg-[#1e1e1e] border border-[#333] flex items-center justify-center text-gray-500 hover:text-white hover:bg-rose-600 hover:border-rose-500 transition-all shadow"
+          className="absolute -top-2.5 -right-2.5 z-30 w-6 h-6 rounded-full bg-[#1e1e1e] border border-[#333] flex items-center justify-center text-gray-500 hover:text-white hover:bg-rose-600 hover:border-rose-500 transition-all shadow-lg cursor-pointer"
         >
-          <X className="w-2.5 h-2.5" />
+          <X className="w-3 h-3" />
         </button>
       )}
 
       {/* ── INTEGRATED TITLE & COMPACT CONTROLS ────────────────────────────── */}
       <div className="bg-[#0c0c0c] border-b border-[#161616]">
-
-        {/* Target Buttons at TOP */}
-        <div className="grid grid-cols-2 gap-[2px] p-[2px] bg-[#080808] border-b border-white/5">
-          {/* YES SIDE */}
-          <div className="flex flex-col gap-[2px]">
-            <button
-              onClick={() => handleTargetTrade("yes", null, 2, false)}
-              disabled={isTrading}
-              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-2 gap-1"
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <Target className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">YES ALL</span>
-              </div>
-              <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
-            </button>
-            <button
-              onClick={() => handleTargetTrade("yes", targetQty, 2, false)}
-              disabled={isTrading}
-              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-2 gap-1"
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <Target className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">YES {fmtQty(targetQty)}</span>
-              </div>
-              <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
-            </button>
-          </div>
-
-          {/* NO SIDE */}
-          <div className="flex flex-col gap-[2px]">
-            <button
-              onClick={() => handleTargetTrade("no", null, 2, false)}
-              disabled={isTrading}
-              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-2 gap-1"
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <Target className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">NO ALL</span>
-              </div>
-              <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
-            </button>
-            <button
-              onClick={() => handleTargetTrade("no", targetQty, 2, false)}
-              disabled={isTrading}
-              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-2 gap-1"
-            >
-              <div className="flex items-center gap-1.5 truncate">
-                <Target className="w-2.5 h-2.5 shrink-0" />
-                <span className="truncate">NO {fmtQty(targetQty)}</span>
-              </div>
-              <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
-            </button>
-          </div>
-        </div>
 
         {/* Row 1: Event Title (if exists) */}
         {eventTitle && (
@@ -473,11 +418,11 @@ const MarketCardComponent = ({
           </div>
         )}
 
-        {/* Row 2: Title + Main Inputs */}
-        <div className="px-2 py-1.5 flex items-center gap-2">
+        {/* Row 2: Title + Main Inputs (flex-wrap for squeezed layouts) */}
+        <div className="px-2 py-1.5 flex flex-wrap items-start justify-between gap-1.5">
           {/* Title & Ticker */}
-          <div className="flex-1 min-w-0 pr-1">
-            <div className="text-[11px] font-bold text-gray-100 leading-tight line-clamp-2">
+          <div className="flex-1 min-w-[90px] pr-1">
+            <div className="text-[11px] font-bold text-gray-100 leading-tight break-words">
               {displayTitle}
             </div>
             <div className="text-[8px] text-gray-700 font-mono mt-0.5 truncate uppercase">
@@ -567,7 +512,7 @@ const MarketCardComponent = ({
           <div className="text-right">
             <span className="text-[7px] font-bold uppercase text-gray-500 tracking-widest block mb-0.5">Avg Price</span>
             <span className="text-[11px] font-mono font-bold text-gray-100">
-              {(externalPosition?.price ?? position?.price ?? 0).toFixed(3)}¢
+              {(externalPosition?.price ?? position?.price ?? 0).toFixed(0)}¢
             </span>
           </div>
         </div>
@@ -612,10 +557,53 @@ const MarketCardComponent = ({
         )}
       </div>
 
-      {/* ── BUY BUTTONS ────────────────────────────────────────────────────── */}
+      {/* ── BUY & TARGET BUTTONS ────────────────────────────────────────────── */}
+      <div className="px-2 pb-2.5 flex flex-col gap-[4px]">
+        {/* Target Buttons (moved here) */}
+        <div className="grid grid-cols-2 gap-[3px]">
+          {/* YES SIDE */}
+          <div className="flex flex-col gap-[2px]">
+            <button
+              onClick={() => handleTargetTrade("yes", null, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-1.5 gap-1"
+            >
+              <span className="truncate">YES ALL</span>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
+            </button>
+            <button
+              onClick={() => handleTargetTrade("yes", targetQty, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-1.5 gap-1"
+            >
+              <span className="truncate">YES {fmtQty(targetQty)}</span>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
+            </button>
+          </div>
 
-      {/* ── BUY BUTTONS ────────────────────────────────────────────────────── */}
-      <div className="px-2 pb-2.5 flex flex-col gap-[3px]">
+          {/* NO SIDE */}
+          <div className="flex flex-col gap-[2px]">
+            <button
+              onClick={() => handleTargetTrade("no", null, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-1.5 gap-1"
+            >
+              <span className="truncate">NO ALL</span>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
+            </button>
+            <button
+              onClick={() => handleTargetTrade("no", targetQty, 2, false)}
+              disabled={isTrading}
+              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-1.5 gap-1"
+            >
+              <span className="truncate">NO {fmtQty(targetQty)}</span>
+              <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="h-[0.5px] bg-white/5 my-0.5" />
+
         {/* Main YES / NO */}
         <div className="grid grid-cols-2 gap-[3px]">
           <button

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { fetchMarketsAction, fetchEventAction, fetchMultipleOrderBooksAction, fetchPositionsAction } from '@/app/actions';
 import MarketCard from '@/components/MarketCard';
-import { ArrowRight, Link as LinkIcon, Loader2, Zap, Grid3X3 } from 'lucide-react';
-import { useEffect } from 'react';
+import { ArrowRight, Link as LinkIcon, Loader2, Zap, Grid3X3, ArrowUpDown } from 'lucide-react';
 import type { Market } from '@/lib/api';
 
 const COLUMN_OPTIONS = [4, 5, 6, 7, 8] as const;
@@ -18,10 +17,54 @@ export default function QuickTradePage() {
   const [eventTitle, setEventTitle] = useState<string | null>(null);
   const [currentTicker, setCurrentTicker] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [gridCols, setGridCols] = useState(5);
+  const [sortBy, setSortBy] = useState<'alphabetical' | 'price' | 'position' | 'custom'>('alphabetical');
   const prefetchCache = useRef<Map<string, Promise<any>>>(new Map());
+
+  const getYesBid = (m: Market) => {
+    const ob = allOrderbooks[m.ticker]?.orderbook;
+    if (ob?.yes && ob.yes.length > 0) {
+      return ob.yes[0][0];
+    }
+    return m.yes_bid ?? 0;
+  };
+
+  const getPositionCount = (m: Market) => {
+    const p = allPositions.find(pos =>
+      pos.ticker?.toUpperCase() === m.ticker?.toUpperCase() ||
+      pos.market_ticker?.toUpperCase() === m.ticker?.toUpperCase()
+    );
+    if (!p) return 0;
+    const rawPos = p.position ?? p.position_fp ?? 0;
+    return Math.abs(Number(rawPos));
+  };
+
+  const sortMarkets = (type: 'alphabetical' | 'price' | 'position') => {
+    setSortBy(type);
+    setMarkets(prev => {
+      const list = [...prev];
+      if (type === 'price') {
+        return list.sort((a, b) => getYesBid(b) - getYesBid(a));
+      }
+      if (type === 'alphabetical') {
+        return list.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }));
+      }
+      if (type === 'position') {
+        return list.sort((a, b) => {
+          const posA = getPositionCount(a);
+          const posB = getPositionCount(b);
+          if (posA > 0 || posB > 0) {
+            if (posA > 0 && posB > 0) return posB - posA;
+            return posA > 0 ? -1 : 1;
+          }
+          return getYesBid(b) - getYesBid(a);
+        });
+      }
+      return list;
+    });
+  };
 
   const extractAndValidateTicker = (url: string) => {
     try {
@@ -42,7 +85,7 @@ export default function QuickTradePage() {
     setUrlInput(val);
 
     const ticker = extractAndValidateTicker(val);
-    
+
     if (ticker && !prefetchCache.current.has(ticker)) {
       console.log("🚀 Pre-fetching data for:", ticker);
       const fetchPromise = (async () => {
@@ -70,13 +113,14 @@ export default function QuickTradePage() {
     setMarkets([]);
     setEventTitle(null);
     setCurrentTicker(null);
+    setSortBy('alphabetical');
 
     try {
       const ticker = extractAndValidateTicker(urlInput);
 
       if (!ticker) {
         const parts = urlInput.split('/');
-        const lastPart = parts[parts.length - 1]; 
+        const lastPart = parts[parts.length - 1];
         const rawTicker = lastPart?.split('?')[0]?.toUpperCase();
         if (!rawTicker || rawTicker.length < 3) throw new Error("Could not extract a valid ticker from this URL.");
       }
@@ -107,7 +151,10 @@ export default function QuickTradePage() {
         if (result.eventData) {
           setEventTitle(result.eventData.title);
         }
-        setMarkets(result.marketData);
+        const sortedData = (result.marketData || []).sort((a, b) =>
+          a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })
+        );
+        setMarkets(sortedData);
       }
 
     } catch (err: any) {
@@ -129,9 +176,9 @@ export default function QuickTradePage() {
           fetchMultipleOrderBooksAction(tickers),
           fetchPositionsAction()
         ]);
-        
+
         setAllOrderbooks(prev => ({ ...prev, ...obData }));
-        
+
         if (posRes.success) {
           setAllPositions(posRes.positions);
         }
@@ -155,14 +202,15 @@ export default function QuickTradePage() {
 
   const handleDrop = (index: number) => {
     if (draggedIndex === null || draggedIndex === index) return;
-    
+
     const updatedMarkets = [...markets];
     const draggedMarket = updatedMarkets[draggedIndex];
-    
+
     updatedMarkets.splice(draggedIndex, 1);
     updatedMarkets.splice(index, 0, draggedMarket);
-    
+
     setMarkets(updatedMarkets);
+    setSortBy('custom');
     setDraggedIndex(null);
   };
 
@@ -173,7 +221,7 @@ export default function QuickTradePage() {
 
   return (
     <div className="min-h-screen bg-background text-text flex flex-col items-center pt-20 px-4">
-      
+
       {/* --- HEADER --- */}
       <div className="text-center mb-10 space-y-4">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-purple-600 shadow-lg shadow-blue-900/20 mb-4">
@@ -190,14 +238,14 @@ export default function QuickTradePage() {
         <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
           <LinkIcon className="w-5 h-5 text-gray-500 group-focus-within:text-blue-500 transition-colors" />
         </div>
-        <input 
-          type="text" 
-          placeholder="https://demo.kalshi.co/markets/..." 
+        <input
+          type="text"
+          placeholder="https://external-api.demo.kalshi.co/markets/..."
           className="w-full bg-[#1a1a1a] border border-gray-800 text-white rounded-xl pl-12 pr-32 py-4 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all shadow-xl placeholder:text-gray-600 font-mono text-sm"
           value={urlInput}
           onChange={handleInputChange}
         />
-        <button 
+        <button
           type="submit"
           disabled={loading || !urlInput}
           className="absolute right-2 top-2 bottom-2 bg-blue-600 hover:bg-blue-500 text-white px-6 rounded-lg font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
@@ -219,7 +267,7 @@ export default function QuickTradePage() {
             {/* Event Title Header + Grid Controls */}
             <div className="flex flex-col items-center gap-2 mb-6">
               <h2 className="text-3xl font-bold text-white leading-tight text-center">
-                {eventTitle || "Event Markets"} 
+                {eventTitle || "Event Markets"}
               </h2>
               <div className="flex items-center gap-3">
                 {currentTicker && (
@@ -235,15 +283,55 @@ export default function QuickTradePage() {
                     <button
                       key={col}
                       onClick={() => setGridCols(col)}
-                      className={`w-7 h-7 rounded text-xs font-bold transition-all ${
-                        gridCols === col
+                      className={`w-7 h-7 rounded text-xs font-bold transition-all ${gridCols === col
                           ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
                           : 'text-gray-500 hover:text-white hover:bg-white/10'
-                      }`}
+                        }`}
                     >
                       {col}
                     </button>
                   ))}
+                </div>
+
+                {/* Sort selector */}
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg">
+                  <ArrowUpDown className="w-3.5 h-3.5 text-gray-400" />
+                  <span className="text-xs text-gray-400 mr-1">Sort</span>
+                  <button
+                    type="button"
+                    onClick={() => sortMarkets('alphabetical')}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${sortBy === 'alphabetical'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                        : 'text-gray-500 hover:text-white hover:bg-white/10'
+                      }`}
+                  >
+                    Alpha
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sortMarkets('price')}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${sortBy === 'price'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                        : 'text-gray-500 hover:text-white hover:bg-white/10'
+                      }`}
+                  >
+                    Price
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sortMarkets('position')}
+                    className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${sortBy === 'position'
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
+                        : 'text-gray-500 hover:text-white hover:bg-white/10'
+                      }`}
+                  >
+                    Position
+                  </button>
+                  {sortBy === 'custom' && (
+                    <span className="text-[10px] text-blue-400 font-mono font-bold animate-pulse px-1">
+                      Custom
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -257,21 +345,21 @@ export default function QuickTradePage() {
               }}
             >
               {markets.map((market, index) => (
-                <div 
-                  key={market.ticker} 
+                <div
+                  key={market.ticker}
                   className="cursor-move transition-transform duration-200 hover:scale-[1.01]"
                   draggable
                   onDragStart={() => handleDragStart(index)}
                   onDragOver={handleDragOver}
                   onDrop={() => handleDrop(index)}
                 >
-                  <MarketCard 
-                    market={market} 
+                  <MarketCard
+                    market={market}
                     eventTitle={eventTitle || undefined}
                     onRemove={handleRemoveMarket}
                     externalOrderbook={allOrderbooks[market.ticker]?.orderbook}
                     externalPosition={(() => {
-                      const p = allPositions.find(pos => 
+                      const p = allPositions.find(pos =>
                         pos.ticker?.toUpperCase() === market.ticker?.toUpperCase() ||
                         pos.market_ticker?.toUpperCase() === market.ticker?.toUpperCase()
                       );
@@ -279,7 +367,7 @@ export default function QuickTradePage() {
                       const rawPos = p.position ?? p.position_fp ?? 0;
                       const count = Math.abs(Number(rawPos));
                       if (count === 0) return null;
-                      
+
                       const getCents = (val: any) => {
                         if (val === undefined || val === null || val === '') return 0;
                         const num = parseFloat(String(val));
@@ -291,25 +379,25 @@ export default function QuickTradePage() {
                       // Deriving average price from cost and shares for v2 compatibility
                       const cost = parseFloat(p.total_cost_dollars || p.cost_basis_dollars || p.position_cost_dollars || p.total_traded_dollars || p.total_cost || p.cost || "0");
                       const shares = Math.abs(parseFloat(p.total_cost_shares_fp || p.position_fp || p.position || String(count)));
-                      
+
                       let avgPrice = 0;
                       if (shares > 0 && cost > 0) {
                         avgPrice = (cost / shares) * 100;
                       } else {
                         avgPrice = getCents(
-                          p.average_price ?? 
-                          p.avg_price ?? 
-                          p.avg_cost_basis_dollars ?? 
-                          p.avg_cost_basis ?? 
+                          p.average_price ??
+                          p.avg_price ??
+                          p.avg_cost_basis_dollars ??
+                          p.avg_cost_basis ??
                           p.average_fill_price ??
                           p.price ??
                           0
                         );
                       }
-                      
+
                       return {
                         count: count,
-                        side: (p.side?.toLowerCase() === 'yes' || p.side?.toLowerCase() === 'no') 
+                        side: (p.side?.toLowerCase() === 'yes' || p.side?.toLowerCase() === 'no')
                           ? p.side.toLowerCase() as 'yes' | 'no'
                           : (Number(rawPos) > 0 ? 'yes' : 'no'),
                         price: avgPrice
