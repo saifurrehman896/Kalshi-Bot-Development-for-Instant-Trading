@@ -265,12 +265,11 @@ export async function placeTradeAction(
     const payload = {
       ticker,
       client_order_id: `bot-${Date.now()}`,
-      type: 'limit',
-      outcome_side: side,
-      book_side: 'bid',
+      side: side === 'yes' ? 'bid' : 'ask',
       count: count.toString(),
       price: (price / 100).toFixed(2),
       time_in_force: isResting ? 'good_till_canceled' : 'immediate_or_cancel',
+      self_trade_prevention_type: 'taker_at_cross',
     };
 
     const res = await fetch(`${baseUrl}${path}`, {
