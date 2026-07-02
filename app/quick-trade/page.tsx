@@ -395,12 +395,14 @@ export default function QuickTradePage() {
                         );
                       }
 
+                      const isYes = (p.side?.toLowerCase() === 'yes' || p.side?.toLowerCase() === 'no')
+                        ? p.side.toLowerCase() === 'yes'
+                        : (Number(rawPos) > 0);
+
                       return {
                         count: count,
-                        side: (p.side?.toLowerCase() === 'yes' || p.side?.toLowerCase() === 'no')
-                          ? p.side.toLowerCase() as 'yes' | 'no'
-                          : (Number(rawPos) > 0 ? 'yes' : 'no'),
-                        price: avgPrice
+                        side: isYes ? 'yes' : 'no',
+                        price: isYes ? avgPrice : (100 - avgPrice)
                       };
                     })()}
                     noPoll={true}
