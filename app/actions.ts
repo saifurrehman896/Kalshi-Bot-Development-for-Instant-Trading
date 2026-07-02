@@ -262,15 +262,23 @@ export async function placeTradeAction(
       }
     ).toString('base64');
 
+    const cleanPrice = isNaN(price) ? 99 : Math.max(1, Math.min(99, Math.round(price)));
+
     const payload = {
       ticker,
       client_order_id: `bot-${Date.now()}`,
       side: side === 'yes' ? 'bid' : 'ask',
       count: count.toString(),
-      price: (price / 100).toFixed(2),
+      type: 'limit',
+      price: (side === 'yes' ? cleanPrice / 100 : (100 - cleanPrice) / 100).toFixed(2),
       time_in_force: isResting ? 'good_till_canceled' : 'immediate_or_cancel',
       self_trade_prevention_type: 'taker_at_cross',
     };
+
+    console.log(`[TRADE SENT] Ticker: ${ticker} | Side: ${payload.side} | Price: $${payload.price} | Qty: ${payload.count}`);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const res = await fetch(`${baseUrl}${path}`, {
       method,
@@ -281,13 +289,17 @@ export async function placeTradeAction(
         'KALSHI-ACCESS-TIMESTAMP': timestamp,
       },
       body: JSON.stringify(payload),
-      // @ts-ignore - 'agent' is supported in Node.js fetch implementation
+      // @ts-ignore
       agent: keepAliveAgent,
+      signal: controller.signal,
     });
+    
+    clearTimeout(timeoutId);
 
     const data = await res.json();
-
+    
     if (!res.ok) {
+      console.error("[TRADE ERROR RESPONSE]", JSON.stringify(data, null, 2));
       throw new Error(data?.error?.message || 'Trade Failed');
     }
 

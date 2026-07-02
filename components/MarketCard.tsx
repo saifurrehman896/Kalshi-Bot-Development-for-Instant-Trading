@@ -145,6 +145,7 @@ const MarketCardComponent = ({
             p.market_ticker?.toUpperCase() === market.ticker?.toUpperCase()
           );
           if (myPos) {
+            console.log(`[DEBUG POSITIONS] Ticker: ${market.ticker} | Object Keys:`, Object.keys(myPos), "| Object Values:", Object.values(myPos));
             // Support both integer 'position' and string 'position_fp'
             const rawPos = myPos.position ?? myPos.position_fp ?? 0;
             const count = Math.abs(Number(rawPos));
@@ -179,12 +180,14 @@ const MarketCardComponent = ({
                 );
               }
 
+              const isYes = (myPos.side?.toLowerCase() === 'yes' || myPos.side?.toLowerCase() === 'no')
+                ? myPos.side.toLowerCase() === 'yes'
+                : (Number(rawPos) > 0);
+
               setPosition({
                 count: count,
-                side: (myPos.side?.toLowerCase() === 'yes' || myPos.side?.toLowerCase() === 'no')
-                  ? myPos.side.toLowerCase() as 'yes' | 'no'
-                  : (Number(rawPos) > 0 ? 'yes' : 'no'),
-                price: avgPrice
+                side: isYes ? 'yes' : 'no',
+                price: isYes ? avgPrice : (100 - avgPrice)
               });
               // @ts-ignore
               window.DEBUG_POSITIONS = myPos;
@@ -251,28 +254,6 @@ const MarketCardComponent = ({
   const toast = (type: "success" | "error", message: string) =>
     setTradeResult({ type, message, id: Date.now() });
 
-  // const handleTrade = async (side: "yes"|"no", qtyOverride?: number) => {
-  //   if (isTrading) return;
-  //   const maxAvail = side === "yes" ? maxYesLiq : maxNoLiq;
-  //   const qty  = qtyOverride ?? targetQty ?? maxAvail;
-  //   const cap  = targetPrice ?? 99;
-  //   const mktp = side === "yes" ? bestYesPrice : bestNoPrice;
-
-  //   if (!qty || qty <= 0) { toast("error", "Fetching liquidity…"); setTimeout(() => setTradeResult(null), 1000); return; }
-  //   setIsTrading(true);
-  //   try {
-  //     const res = await placeTradeAction(market.ticker, side, qty, cap, isResting);
-  //     if (!res.success) throw new Error(res.error || "Trade rejected");
-  //     toast("success", `${qty} ${side.toUpperCase()} @ ${mktp ?? "?"}¢`);
-  //     refresh();
-  //   } catch (e: any) {
-  //     toast("error", e.message || "Failed");
-  //   } finally {
-  //     setIsTrading(false);
-  //     setTimeout(() => setTradeResult(p => p && Date.now()-p.id > 1000 ? null : p), 1500);
-  //   }
-  // };
-  // inside MarketCard component
   const handleTrade = async (side: "yes" | "no", qtyOverride?: number) => {
     if (isTrading) return;
 
@@ -284,10 +265,8 @@ const MarketCardComponent = ({
       return;
     }
 
-    // 1. SET LOCAL LOADING (Button only, not full screen)
     setIsTrading(true);
 
-    // 2. SHOW IMMEDIATE OPTIMISTIC TOAST
     const optimisticId = Date.now();
     setTradeResult({
       type: "success",
@@ -296,15 +275,31 @@ const MarketCardComponent = ({
     });
 
     try {
-      // 3. TRIGGER ACTION (Don't let it block the UI flow)
-      const res = await placeTradeAction(market.ticker, side, qty, targetPrice ?? 99, isResting);
+      const rawPrice = targetPrice ?? mktp ?? 99;
+      const clampedPrice = isNaN(rawPrice) ? 99 : Math.max(1, Math.min(99, Math.round(rawPrice)));
+      const res = await placeTradeAction(market.ticker, side, qty, clampedPrice, isResting);
 
       if (!res.success) throw new Error(res.error || "Trade rejected");
+
+      const order = res.data?.order;
+      const fillCount = order?.fill_count_fp ? Math.round(parseFloat(order.fill_count_fp)) : 0;
+      const rawFillPrice = order?.average_fill_price ? parseFloat(order.average_fill_price) : (order?.price ? parseFloat(order.price) : null);
+      
+      let displayPrice: number | null = null;
+      if (rawFillPrice !== null && !isNaN(rawFillPrice)) {
+        const priceCents = Math.round(rawFillPrice * 100);
+        displayPrice = side === 'yes' ? priceCents : (100 - priceCents);
+      } else {
+        displayPrice = targetPrice ?? mktp;
+      }
+
+      const prefix = isResting ? (fillCount > 0 ? "FILLED" : "RESTING") : "FILLED";
+      const finalPriceStr = displayPrice != null ? `${displayPrice}¢` : "?¢";
 
       // 4. UPDATE TOAST ON ACTUAL SUCCESS
       setTradeResult({
         type: "success",
-        message: `${qty} ${side.toUpperCase()} @ ${mktp ?? "?"}¢`,
+        message: `${prefix} ${qty} ${side.toUpperCase()} @ ${finalPriceStr}`,
         id: Date.now()
       });
 
@@ -314,6 +309,44 @@ const MarketCardComponent = ({
     } finally {
       setIsTrading(false);
       // Auto-clear toast later
+      setTimeout(() => {
+        setTradeResult(p => (p && Date.now() - p.id > 2000 ? null : p));
+      }, 3000);
+    }
+  };
+
+  const handleClosePosition = async () => {
+    const currentSide = externalPosition?.side || position?.side;
+    const currentCount = externalPosition?.count || position?.count;
+    if (!currentSide || !currentCount || isTrading) return;
+
+    setIsTrading(true);
+    setTradeResult({
+      type: "success",
+      message: `Closing: Selling ${currentCount} ${currentSide.toUpperCase()}...`,
+      id: Date.now()
+    });
+
+    try {
+      const tradeSide = currentSide === 'yes' ? 'no' : 'yes';
+      const res = await placeTradeAction(market.ticker, tradeSide, currentCount, 99, false);
+
+      if (!res.success) throw new Error(res.error || "Close failed");
+
+      const order = res.data?.order;
+      const fillCount = order?.fill_count_fp ? Math.round(parseFloat(order.fill_count_fp)) : 0;
+
+      if (fillCount > 0) {
+        toast("success", `CLOSED ${fillCount} ${currentSide.toUpperCase()}`);
+      } else {
+        toast("error", `Close order placed (Resting)`);
+      }
+
+      refresh();
+    } catch (e: any) {
+      toast("error", e.message || "Close failed");
+    } finally {
+      setIsTrading(false);
       setTimeout(() => {
         setTradeResult(p => (p && Date.now() - p.id > 2000 ? null : p));
       }, 3000);
@@ -364,11 +397,18 @@ const MarketCardComponent = ({
       // Extract fill information from Kalshi response
       const order = res.data?.order;
       const fillCount = order?.fill_count_fp ? Math.round(parseFloat(order.fill_count_fp)) : 0;
+      const rawFillPrice = order?.average_fill_price ? parseFloat(order.average_fill_price) : (order?.price ? parseFloat(order.price) : null);
+      
+      let displayPrice = priceCap;
+      if (rawFillPrice !== null && !isNaN(rawFillPrice)) {
+        const priceCents = Math.round(rawFillPrice * 100);
+        displayPrice = side === 'yes' ? priceCents : (100 - priceCents);
+      }
 
       if (fillCount > 0) {
-        toast("success", `FILLED ${fillCount} ${side.toUpperCase()} @ ${priceCap}¢`);
+        toast("success", `FILLED ${fillCount} ${side.toUpperCase()} @ ${displayPrice}¢`);
       } else {
-        toast("error", `No liquidity @ ${priceCap}¢ (Canceled)`);
+        toast("error", `No liquidity @ ${displayPrice}¢ (Canceled)`);
       }
 
       refresh();
@@ -509,11 +549,20 @@ const MarketCardComponent = ({
               </span>
             </div>
           </div>
-          <div className="text-right">
-            <span className="text-[7px] font-bold uppercase text-gray-500 tracking-widest block mb-0.5">Avg Price</span>
-            <span className="text-[11px] font-mono font-bold text-gray-100">
-              {(externalPosition?.price ?? position?.price ?? 0).toFixed(0)}¢
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <span className="text-[7px] font-bold uppercase text-gray-500 tracking-widest block mb-0.5">Avg Price</span>
+              <span className="text-[11px] font-mono font-bold text-gray-100">
+                {(externalPosition?.price ?? position?.price ?? 0).toFixed(0)}¢
+              </span>
+            </div>
+            <button
+              onClick={handleClosePosition}
+              disabled={isTrading}
+              className="px-2 py-1 bg-rose-500/20 hover:bg-rose-500 hover:text-white border border-rose-500/30 text-rose-400 rounded text-[9px] font-bold transition-all uppercase cursor-pointer"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -559,14 +608,14 @@ const MarketCardComponent = ({
 
       {/* ── BUY & TARGET BUTTONS ────────────────────────────────────────────── */}
       <div className="px-2 pb-2.5 flex flex-col gap-[4px]">
-        {/* Target Buttons (moved here) */}
+        {/* Target Buttons */}
         <div className="grid grid-cols-2 gap-[3px]">
           {/* YES SIDE */}
           <div className="flex flex-col gap-[2px]">
             <button
               onClick={() => handleTargetTrade("yes", null, 2, false)}
               disabled={isTrading}
-              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-1.5 gap-1"
+              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-1.5 gap-1 cursor-pointer"
             >
               <span className="truncate">YES ALL</span>
               <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
@@ -574,7 +623,7 @@ const MarketCardComponent = ({
             <button
               onClick={() => handleTargetTrade("yes", targetQty, 2, false)}
               disabled={isTrading}
-              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-1.5 gap-1"
+              className="h-[28px] bg-[#06180c] border border-emerald-500/30 hover:bg-emerald-600 hover:border-emerald-400 rounded text-[9px] font-bold text-emerald-400 hover:text-black transition-all flex items-center justify-between px-1.5 gap-1 cursor-pointer"
             >
               <span className="truncate">YES {fmtQty(targetQty)}</span>
               <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
@@ -586,7 +635,7 @@ const MarketCardComponent = ({
             <button
               onClick={() => handleTargetTrade("no", null, 2, false)}
               disabled={isTrading}
-              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-1.5 gap-1"
+              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-1.5 gap-1 cursor-pointer"
             >
               <span className="truncate">NO ALL</span>
               <span className="opacity-60 text-[7px] font-mono shrink-0">MAX</span>
@@ -594,7 +643,7 @@ const MarketCardComponent = ({
             <button
               onClick={() => handleTargetTrade("no", targetQty, 2, false)}
               disabled={isTrading}
-              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-1.5 gap-1"
+              className="h-[28px] bg-[#180606] border border-rose-500/30 hover:bg-rose-600 hover:border-rose-400 rounded text-[9px] font-bold text-rose-400 hover:text-white transition-all flex items-center justify-between px-1.5 gap-1 cursor-pointer"
             >
               <span className="truncate">NO {fmtQty(targetQty)}</span>
               <span className="opacity-60 text-[7px] font-mono shrink-0">@ 2¢</span>
@@ -609,7 +658,7 @@ const MarketCardComponent = ({
           <button
             onClick={() => handleTrade("yes")}
             disabled={isTrading || (!isResting && !bestYesPrice)}
-            className="group py-2 bg-[#06180c] border border-emerald-900/40 hover:bg-emerald-500 hover:border-emerald-400 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="group py-2 bg-[#06180c] border border-emerald-900/40 hover:bg-emerald-500 hover:border-emerald-400 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <span className="text-[8px] font-bold uppercase text-emerald-500 group-hover:text-black tracking-wider block">
               {fmtQty(targetQty)} YES
@@ -618,7 +667,7 @@ const MarketCardComponent = ({
           <button
             onClick={() => handleTrade("no")}
             disabled={isTrading || (!isResting && !bestNoPrice)}
-            className="group py-2 bg-[#180606] border border-rose-900/40 hover:bg-rose-500 hover:border-rose-400 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="group py-2 bg-[#180606] border border-rose-900/40 hover:bg-rose-500 hover:border-rose-400 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
           >
             <span className="text-[8px] font-bold uppercase text-rose-500 group-hover:text-white tracking-wider block">
               {fmtQty(targetQty)} NO
@@ -636,7 +685,7 @@ const MarketCardComponent = ({
                   key={`yes-${q}`}
                   onClick={() => handleTrade("yes", q)}
                   disabled={isTrading || (!isResting && !bestYesPrice)}
-                  className="flex-1 py-1 bg-[#06180c] border border-emerald-900/30 hover:bg-emerald-600 hover:border-emerald-500 rounded text-[8px] font-mono font-bold text-emerald-600 hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="flex-1 py-1 bg-[#06180c] border border-emerald-900/30 hover:bg-emerald-600 hover:border-emerald-500 rounded text-[8px] font-mono font-bold text-emerald-600 hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {q >= 1000 ? `${q / 1000}k` : q}
                 </button>
@@ -648,7 +697,7 @@ const MarketCardComponent = ({
                   key={`yes-${q}`}
                   onClick={() => handleTrade("yes", q)}
                   disabled={isTrading || (!isResting && !bestYesPrice)}
-                  className="flex-1 py-1 bg-[#06180c] border border-emerald-900/30 hover:bg-emerald-600 hover:border-emerald-500 rounded text-[8px] font-mono font-bold text-emerald-600 hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="flex-1 py-1 bg-[#06180c] border border-emerald-900/30 hover:bg-emerald-600 hover:border-emerald-500 rounded text-[8px] font-mono font-bold text-emerald-600 hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {q >= 1000 ? `${q / 1000}k` : q}
                 </button>
@@ -663,7 +712,7 @@ const MarketCardComponent = ({
                   key={`no-${q}`}
                   onClick={() => handleTrade("no", q)}
                   disabled={isTrading || (!isResting && !bestNoPrice)}
-                  className="flex-1 py-1 bg-[#180606] border border-rose-900/30 hover:bg-rose-600 hover:border-rose-500 rounded text-[8px] font-mono font-bold text-rose-600 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="flex-1 py-1 bg-[#180606] border border-rose-900/30 hover:bg-rose-600 hover:border-rose-500 rounded text-[8px] font-mono font-bold text-rose-600 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {q >= 1000 ? `${q / 1000}k` : q}
                 </button>
@@ -675,7 +724,7 @@ const MarketCardComponent = ({
                   key={`no-${q}`}
                   onClick={() => handleTrade("no", q)}
                   disabled={isTrading || (!isResting && !bestNoPrice)}
-                  className="flex-1 py-1 bg-[#180606] border border-rose-900/30 hover:bg-rose-600 hover:border-rose-500 rounded text-[8px] font-mono font-bold text-rose-600 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="flex-1 py-1 bg-[#180606] border border-rose-900/30 hover:bg-rose-600 hover:border-rose-500 rounded text-[8px] font-mono font-bold text-rose-600 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {q >= 1000 ? `${q / 1000}k` : q}
                 </button>
